@@ -9,13 +9,6 @@ use Illuminate\Foundation\Application;
 trait InteractsWithRedis
 {
     /**
-     * Indicate connection failed if redis is not available.
-     *
-     * @var bool
-     */
-    private static $connectionFailedOnceWithDefaultsSkip = false;
-
-    /**
      * Redis manager instance.
      *
      * @var \Illuminate\Redis\RedisManager[]
@@ -33,7 +26,7 @@ trait InteractsWithRedis
         $host = getenv('REDIS_HOST') ?: '127.0.0.1';
         $port = getenv('REDIS_PORT') ?: 6379;
 
-        if (static::$connectionFailedOnceWithDefaultsSkip) {
+        if (ShouldSkipRedisTests::$connectionFailedOnceWithDefaultsSkip) {
             $this->markTestSkipped('Trying default host/port failed, please set environment variable REDIS_HOST & REDIS_PORT to enable '.__CLASS__);
 
             return;
@@ -55,8 +48,8 @@ trait InteractsWithRedis
             $this->redis['predis']->connection()->flushdb();
         } catch (Exception $e) {
             if ($host === '127.0.0.1' && $port === 6379 && getenv('REDIS_HOST') === false) {
+                ShouldSkipRedisTests::$connectionFailedOnceWithDefaultsSkip = true;
                 $this->markTestSkipped('Trying default host/port failed, please set environment variable REDIS_HOST & REDIS_PORT to enable '.__CLASS__);
-                static::$connectionFailedOnceWithDefaultsSkip = true;
 
                 return;
             }
