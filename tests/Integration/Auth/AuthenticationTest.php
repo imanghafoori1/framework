@@ -2,7 +2,12 @@
 
 namespace Illuminate\Tests\Integration\Auth;
 
+use function foo\func;
 use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\SessionGuard;
+use Illuminate\Events\Dispatcher;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Testing\Fakes\EventFake;
 use Orchestra\Testbench\TestCase;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Logout;
@@ -221,4 +226,73 @@ class AuthenticationTest extends TestCase
 
         $this->assertNull($provider->retrieveByToken($user->id, $token));
     }
+
+    public function test_dispatcher_changes_if_there_is_one_on_the_auth_guard()
+    {
+        $this->assertInstanceOf(SessionGuard::class, $this->app['auth']->guard());
+        $this->assertInstanceOf(Dispatcher::class, $this->app['auth']->guard()->getDispatcher());
+
+        Event::fake();
+
+        $this->assertInstanceOf(SessionGuard::class, $this->app['auth']->guard());
+        $this->assertInstanceOf(EventFake::class, $this->app['auth']->guard()->getDispatcher());
+    }
+
+    public function test_dispatcher_changes_if_there_is_one_on_the_auth_guard2()
+    {
+        $this->app['config']["auth.guards.myGuard"] = ['driver' => 'myCustomDriver'];
+
+        Auth::extend('myCustomDriver', function() {
+            return new MyCustomGuardStub();
+        });
+
+
+        $this->assertInstanceOf(MyCustomGuardStub::class, $this->app['auth']->guard('myGuard'));
+        $this->assertInstanceOf(Dispatcher::class, $this->app['auth']->guard()->getDispatcher());
+
+        Event::fake();
+
+        $this->assertInstanceOf(MyCustomGuardStub::class, $this->app['auth']->guard('myGuard'));
+        $this->assertInstanceOf(EventFake::class, $this->app['auth']->guard()->getDispatcher());
+    }
+
+    public function test_has_no_problem_if_there_is_no_dispatcher_the_auth_custom_guard()
+    {
+        $this->app['config']["auth.guards.myGuard"] = ['driver' => 'myCustomDriver'];
+
+        Auth::extend('myCustomDriver', function() {
+            return new MyTokenLikeCustomGuardStub();
+        });
+
+
+        $this->assertInstanceOf(MyTokenLikeCustomGuardStub::class, $this->app['auth']->guard('myGuard'));
+
+        Event::fake();
+
+        $this->assertInstanceOf(MyTokenLikeCustomGuardStub::class, $this->app['auth']->guard('myGuard'));
+    }
+}
+
+class MyCustomGuardStub
+{
+    protected $events;
+
+    public function __construct()
+    {
+        $this->setDispatcher(new Dispatcher());
+    }
+
+    public function setDispatcher(Dispatcher $events)
+    {
+        $this->events = $events;
+    }
+
+    public function getDispatcher()
+    {
+        return $this->events;
+    }
+}
+
+class MyTokenLikeCustomGuardStub
+{
 }
