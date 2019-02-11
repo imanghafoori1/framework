@@ -3,6 +3,7 @@
 namespace Illuminate\Foundation\Console;
 
 use Illuminate\Console\GeneratorCommand;
+use Illuminate\Support\Str;
 
 class EventMakeCommand extends GeneratorCommand
 {
@@ -57,5 +58,14 @@ class EventMakeCommand extends GeneratorCommand
     protected function getDefaultNamespace($rootNamespace)
     {
         return $rootNamespace.'\Events';
+    }
+
+    public function handle()
+    {
+        if (Str::startsWith($this->getNameInput(), '\\')) {
+            return false;
+        }
+
+        parent::handle();
     }
 }
