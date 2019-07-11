@@ -135,11 +135,16 @@ class AliasLoader
      * Add an alias to the loader.
      *
      * @param  string  $class
-     * @param  string  $alias
+     * @param  string|null  $alias
      * @return void
      */
-    public function alias($class, $alias)
+    public function alias($class, $alias = null)
     {
+        if (! $alias) {
+            $alias = $class;
+            $class = class_basename($alias);
+        }
+
         $this->aliases[$class] = $alias;
     }
 
