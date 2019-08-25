@@ -3,6 +3,7 @@
 namespace Illuminate\Tests\Pipeline;
 
 use RuntimeException;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use Illuminate\Pipeline\Pipeline;
 use Illuminate\Container\Container;
@@ -156,6 +157,32 @@ class PipelineTest extends TestCase
         $this->assertEquals('foo', $_SERVER['__test.pipe.one']);
 
         unset($_SERVER['__test.pipe.one']);
+    }
+
+    public function testItThrowsInvalidArgumentExceptionWhenPipeIsOfSillyTypes()
+    {
+        $sillyPipe = 111;
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A pipe should of type object, string or a closure, '. gettype($sillyPipe). ' give');
+
+        $result = (new Pipeline(new Container))
+            ->send('foo')
+            ->through([PipelineTestPipeOne::class, 111])
+            ->thenReturn();
+
+        unset($_SERVER['__test.pipe.one']);
+    }
+
+    public function testItThrowsInvalidArgumentExceptionWhenPipeIsOfSillyTypes2()
+    {
+        $sillyPipe = ['handle1'];
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A pipe should of type object, string or a closure, '. gettype($sillyPipe). ' give');
+
+        (new Pipeline(new Container))
+            ->send('foo')
+            ->through([PipelineTestPipeOne::class, $sillyPipe])
+            ->thenReturn();
     }
 }
 
