@@ -8,10 +8,10 @@ interface Validator extends MessageProvider
 {
     /**
      * Run the validator's rules against its data.
-     *
+     * @param  \Closure  $onFail
      * @return array
      */
-    public function validate();
+    public function validate($onFail = null);
 
     /**
      * Get the attributes and values that were validated.
