@@ -77,7 +77,7 @@ class Dispatcher implements DispatcherContract
             if (Str::contains($event, '*')) {
                 $this->setupWildcardListen($event, $listener);
             } else {
-                $this->listeners[$event][] = $this->makeListener($listener);
+                $this->listeners[$event][] = $listener;
             }
         }
     }
@@ -297,7 +297,10 @@ class Dispatcher implements DispatcherContract
      */
     public function getListeners($eventName)
     {
-        $listeners = $this->listeners[$eventName] ?? [];
+        $listeners = [];
+        foreach ($this->listeners[$eventName] ?? [] as $rawListener) {
+            $listeners[] = $this->makeListener($rawListener);
+        }
 
         $listeners = array_merge(
             $listeners,
@@ -339,7 +342,7 @@ class Dispatcher implements DispatcherContract
     {
         foreach (class_implements($eventName) as $interface) {
             if (isset($this->listeners[$interface])) {
-                foreach ($this->listeners[$interface] as $names) {
+                foreach ($this->getListeners($interface) as $names) {
                     $listeners = array_merge($listeners, (array) $names);
                 }
             }
