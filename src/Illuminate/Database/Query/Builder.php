@@ -12,6 +12,8 @@ use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Query\Grammars\Grammar;
 use Illuminate\Database\Query\Processors\Processor;
+use Illuminate\Pagination\CursorPaginationException;
+use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
@@ -1110,12 +1112,12 @@ class Builder
      * Add a where between statement to the query.
      *
      * @param  string|\Illuminate\Database\Query\Expression  $column
-     * @param  array  $values
+     * @param  iterable  $values
      * @param  string  $boolean
      * @param  bool  $not
      * @return $this
      */
-    public function whereBetween($column, array $values, $boolean = 'and', $not = false)
+    public function whereBetween($column, iterable $values, $boolean = 'and', $not = false)
     {
         $type = 'between';
 
@@ -1148,10 +1150,10 @@ class Builder
      * Add an or where between statement to the query.
      *
      * @param  string  $column
-     * @param  array  $values
+     * @param  iterable  $values
      * @return $this
      */
-    public function orWhereBetween($column, array $values)
+    public function orWhereBetween($column, iterable $values)
     {
         return $this->whereBetween($column, $values, 'or');
     }
@@ -1172,11 +1174,11 @@ class Builder
      * Add a where not between statement to the query.
      *
      * @param  string  $column
-     * @param  array  $values
+     * @param  iterable  $values
      * @param  string  $boolean
      * @return $this
      */
-    public function whereNotBetween($column, array $values, $boolean = 'and')
+    public function whereNotBetween($column, iterable $values, $boolean = 'and')
     {
         return $this->whereBetween($column, $values, $boolean, true);
     }
@@ -1198,10 +1200,10 @@ class Builder
      * Add an or where not between statement to the query.
      *
      * @param  string  $column
-     * @param  array  $values
+     * @param  iterable  $values
      * @return $this
      */
-    public function orWhereNotBetween($column, array $values)
+    public function orWhereNotBetween($column, iterable $values)
     {
         return $this->whereNotBetween($column, $values, 'or');
     }
@@ -1899,6 +1901,59 @@ class Builder
     }
 
     /**
+     * Add a "having null" clause to the query.
+     *
+     * @param  string|array  $columns
+     * @param  string  $boolean
+     * @param  bool  $not
+     * @return $this
+     */
+    public function havingNull($columns, $boolean = 'and', $not = false)
+    {
+        $type = $not ? 'NotNull' : 'Null';
+
+        foreach (Arr::wrap($columns) as $column) {
+            $this->havings[] = compact('type', 'column', 'boolean');
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add an "or having null" clause to the query.
+     *
+     * @param  string  $column
+     * @return $this
+     */
+    public function orHavingNull($column)
+    {
+        return $this->havingNull($column, 'or');
+    }
+
+    /**
+     * Add a "having not null" clause to the query.
+     *
+     * @param  string|array  $columns
+     * @param  string  $boolean
+     * @return $this
+     */
+    public function havingNotNull($columns, $boolean = 'and')
+    {
+        return $this->havingNull($columns, $boolean, true);
+    }
+
+    /**
+     * Add an "or having not null" clause to the query.
+     *
+     * @param  string  $column
+     * @return $this
+     */
+    public function orHavingNotNull($column)
+    {
+        return $this->havingNotNull($column, 'or');
+    }
+
+    /**
      * Add a "having between " clause to the query.
      *
      * @param  string  $column
@@ -2358,6 +2413,75 @@ class Builder
             'path' => Paginator::resolveCurrentPath(),
             'pageName' => $pageName,
         ]);
+    }
+
+    /**
+     * Get a paginator only supporting simple next and previous links.
+     *
+     * This is more efficient on larger data-sets, etc.
+     *
+     * @param  int|null  $perPage
+     * @param  array  $columns
+     * @param  string  $cursorName
+     * @param  string|null  $cursor
+     * @return \Illuminate\Contracts\Pagination\Paginator
+     * @throws \Illuminate\Pagination\CursorPaginationException
+     */
+    public function cursorPaginate($perPage = 15, $columns = ['*'], $cursorName = 'cursor', $cursor = null)
+    {
+        $cursor = $cursor ?: CursorPaginator::resolveCurrentCursor($cursorName);
+
+        $orders = $this->ensureOrderForCursorPagination(! is_null($cursor) && $cursor->pointsToPreviousItems());
+
+        $orderDirection = $orders->first()['direction'] ?? 'asc';
+
+        $comparisonOperator = $orderDirection === 'asc' ? '>' : '<';
+
+        $parameters = $orders->pluck('column')->toArray();
+
+        if (! is_null($cursor)) {
+            if (count($parameters) === 1) {
+                $this->where($column = $parameters[0], $comparisonOperator, $cursor->parameter($column));
+            } elseif (count($parameters) > 1) {
+                $this->whereRowValues($parameters, $comparisonOperator, $cursor->parameters($parameters));
+            }
+        }
+
+        $this->limit($perPage + 1);
+
+        return $this->cursorPaginator($this->get($columns), $perPage, $cursor, [
+            'path' => Paginator::resolveCurrentPath(),
+            'cursorName' => $cursorName,
+            'parameters' => $parameters,
+        ]);
+    }
+
+    /**
+     * Ensure the proper order by required for cursor pagination.
+     *
+     * @param  bool  $shouldReverse
+     * @return \Illuminate\Support\Collection
+     * @throws \Illuminate\Pagination\CursorPaginationException
+     */
+    protected function ensureOrderForCursorPagination($shouldReverse = false)
+    {
+        $this->enforceOrderBy();
+
+        $orderDirections = collect($this->orders)->pluck('direction')->unique();
+
+        if ($orderDirections->count() > 1) {
+            throw new CursorPaginationException('Only a single order by direction is supported when using cursor pagination.');
+        }
+
+        if ($shouldReverse) {
+            $this->orders = collect($this->orders)->map(function ($order) {
+                $order['direction'] = $order['direction'] === 'asc' ? 'desc' : 'asc';
+
+                return $order;
+            })->toArray();
+        }
+
+        return collect($this->orders);
     }
 
     /**

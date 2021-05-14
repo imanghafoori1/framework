@@ -16,6 +16,8 @@ use Illuminate\Database\Query\Grammars\SqlServerGrammar;
 use Illuminate\Database\Query\Processors\MySqlProcessor;
 use Illuminate\Database\Query\Processors\Processor;
 use Illuminate\Pagination\AbstractPaginator as Paginator;
+use Illuminate\Pagination\Cursor;
+use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Pagination\LengthAwarePaginator;
 use InvalidArgumentException;
 use Mockery as m;
@@ -673,6 +675,17 @@ class DatabaseQueryBuilderTest extends TestCase
         $builder->select('*')->from('users')->whereBetween('id', [new Raw(1), new Raw(2)]);
         $this->assertSame('select * from "users" where "id" between 1 and 2', $builder->toSql());
         $this->assertEquals([], $builder->getBindings());
+
+        $builder = $this->getBuilder();
+        $period = now()->toPeriod(now()->addDay());
+        $builder->select('*')->from('users')->whereBetween('created_at', $period);
+        $this->assertSame('select * from "users" where "created_at" between ? and ?', $builder->toSql());
+        $this->assertEquals($period->toArray(), $builder->getBindings());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->whereBetween('id', collect([1, 2]));
+        $this->assertSame('select * from "users" where "id" between ? and ?', $builder->toSql());
+        $this->assertEquals([0 => 1, 1 => 2], $builder->getBindings());
     }
 
     public function testWhereBetweenColumns()
@@ -1272,6 +1285,76 @@ class DatabaseQueryBuilderTest extends TestCase
         $builder->select('*')->from('users')->havingBetween('id', [[1, 2], [3, 4]]);
         $this->assertSame('select * from "users" having "id" between ? and ?', $builder->toSql());
         $this->assertEquals([0 => 1, 1 => 2], $builder->getBindings());
+    }
+
+    public function testHavingNull()
+    {
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->havingNull('email');
+        $this->assertSame('select * from "users" having "email" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')
+            ->havingNull('email')
+            ->havingNull('phone');
+        $this->assertSame('select * from "users" having "email" is null and "phone" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')
+            ->orHavingNull('email')
+            ->orHavingNull('phone');
+        $this->assertSame('select * from "users" having "email" is null or "phone" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->groupBy('email')->havingNull('email');
+        $this->assertSame('select * from "users" group by "email" having "email" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('email as foo_email')->from('users')->havingNull('foo_email');
+        $this->assertSame('select "email" as "foo_email" from "users" having "foo_email" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select(['category', new Raw('count(*) as "total"')])->from('item')->where('department', '=', 'popular')->groupBy('category')->havingNull('total');
+        $this->assertSame('select "category", count(*) as "total" from "item" where "department" = ? group by "category" having "total" is null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select(['category', new Raw('count(*) as "total"')])->from('item')->where('department', '=', 'popular')->groupBy('category')->havingNull('total');
+        $this->assertSame('select "category", count(*) as "total" from "item" where "department" = ? group by "category" having "total" is null', $builder->toSql());
+    }
+
+    public function testHavingNotNull()
+    {
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->havingNotNull('email');
+        $this->assertSame('select * from "users" having "email" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')
+            ->havingNotNull('email')
+            ->havingNotNull('phone');
+        $this->assertSame('select * from "users" having "email" is not null and "phone" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')
+            ->orHavingNotNull('email')
+            ->orHavingNotNull('phone');
+        $this->assertSame('select * from "users" having "email" is not null or "phone" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->groupBy('email')->havingNotNull('email');
+        $this->assertSame('select * from "users" group by "email" having "email" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select('email as foo_email')->from('users')->havingNotNull('foo_email');
+        $this->assertSame('select "email" as "foo_email" from "users" having "foo_email" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select(['category', new Raw('count(*) as "total"')])->from('item')->where('department', '=', 'popular')->groupBy('category')->havingNotNull('total');
+        $this->assertSame('select "category", count(*) as "total" from "item" where "department" = ? group by "category" having "total" is not null', $builder->toSql());
+
+        $builder = $this->getBuilder();
+        $builder->select(['category', new Raw('count(*) as "total"')])->from('item')->where('department', '=', 'popular')->groupBy('category')->havingNotNull('total');
+        $this->assertSame('select "category", count(*) as "total" from "item" where "department" = ? group by "category" having "total" is not null', $builder->toSql());
     }
 
     public function testHavingShortcut()
@@ -3481,6 +3564,143 @@ SQL;
         $this->assertEquals(new LengthAwarePaginator($results, 2, $perPage, $page, [
             'path' => $path,
             'pageName' => $pageName,
+        ]), $result);
+    }
+
+    public function testCursorPaginate()
+    {
+        $perPage = 16;
+        $columns = ['test'];
+        $cursorName = 'cursor-name';
+        $cursor = new Cursor(['test' => 'bar']);
+        $builder = $this->getMockQueryBuilder()->orderBy('test');
+        $path = 'http://foo.bar?cursor='.$cursor->encode();
+
+        $results = collect([['test' => 'foo'], ['test' => 'bar']]);
+
+        $builder->shouldReceive('where')->with('test', '>', 'bar')->once()->andReturnSelf();
+        $builder->shouldReceive('get')->once()->andReturn($results);
+
+        Paginator::currentPathResolver(function () use ($path) {
+            return $path;
+        });
+
+        $result = $builder->cursorPaginate($perPage, $columns, $cursorName, $cursor);
+
+        $this->assertEquals(new CursorPaginator($results, $perPage, $cursor, [
+            'path' => $path,
+            'cursorName' => $cursorName,
+            'parameters' => ['test'],
+        ]), $result);
+    }
+
+    public function testCursorPaginateMultipleOrderColumns()
+    {
+        $perPage = 16;
+        $columns = ['test'];
+        $cursorName = 'cursor-name';
+        $cursor = new Cursor(['test' => 'bar', 'another' => 'foo']);
+        $builder = $this->getMockQueryBuilder()->orderBy('test')->orderBy('another');
+        $path = 'http://foo.bar?cursor='.$cursor->encode();
+
+        $results = collect([['test' => 'foo'], ['test' => 'bar']]);
+
+        $builder->shouldReceive('whereRowValues')->with(['test', 'another'], '>', ['bar', 'foo'])->once()->andReturnSelf();
+        $builder->shouldReceive('get')->once()->andReturn($results);
+
+        Paginator::currentPathResolver(function () use ($path) {
+            return $path;
+        });
+
+        $result = $builder->cursorPaginate($perPage, $columns, $cursorName, $cursor);
+
+        $this->assertEquals(new CursorPaginator($results, $perPage, $cursor, [
+            'path' => $path,
+            'cursorName' => $cursorName,
+            'parameters' => ['test', 'another'],
+        ]), $result);
+    }
+
+    public function testCursorPaginateWithDefaultArguments()
+    {
+        $perPage = 15;
+        $cursorName = 'cursor';
+        $cursor = new Cursor(['test' => 'bar']);
+        $builder = $this->getMockQueryBuilder()->orderBy('test');
+        $path = 'http://foo.bar?cursor='.$cursor->encode();
+
+        $results = collect([['test' => 'foo'], ['test' => 'bar']]);
+
+        $builder->shouldReceive('get')->once()->andReturn($results);
+
+        CursorPaginator::currentCursorResolver(function () use ($cursor) {
+            return $cursor;
+        });
+
+        Paginator::currentPathResolver(function () use ($path) {
+            return $path;
+        });
+
+        $result = $builder->cursorPaginate();
+
+        $this->assertEquals(new CursorPaginator($results, $perPage, $cursor, [
+            'path' => $path,
+            'cursorName' => $cursorName,
+            'parameters' => ['test'],
+        ]), $result);
+    }
+
+    public function testCursorPaginateWhenNoResults()
+    {
+        $perPage = 15;
+        $cursorName = 'cursor';
+        $builder = $this->getMockQueryBuilder()->orderBy('test');
+        $path = 'http://foo.bar?cursor=3';
+
+        $results = [];
+
+        $builder->shouldReceive('get')->once()->andReturn($results);
+
+        CursorPaginator::currentCursorResolver(function () {
+            return null;
+        });
+
+        Paginator::currentPathResolver(function () use ($path) {
+            return $path;
+        });
+
+        $result = $builder->cursorPaginate();
+
+        $this->assertEquals(new CursorPaginator($results, $perPage, null, [
+            'path' => $path,
+            'cursorName' => $cursorName,
+            'parameters' => ['test'],
+        ]), $result);
+    }
+
+    public function testCursorPaginateWithSpecificColumns()
+    {
+        $perPage = 16;
+        $columns = ['id', 'name'];
+        $cursorName = 'cursor-name';
+        $cursor = new Cursor(['id' => 2]);
+        $builder = $this->getMockQueryBuilder()->orderBy('id');
+        $path = 'http://foo.bar?cursor=3';
+
+        $results = collect([['id' => 3, 'name' => 'Taylor'], ['id' => 5, 'name' => 'Mohamed']]);
+
+        $builder->shouldReceive('get')->once()->andReturn($results);
+
+        Paginator::currentPathResolver(function () use ($path) {
+            return $path;
+        });
+
+        $result = $builder->cursorPaginate($perPage, $columns, $cursorName, $cursor);
+
+        $this->assertEquals(new CursorPaginator($results, $perPage, $cursor, [
+            'path' => $path,
+            'cursorName' => $cursorName,
+            'parameters' => ['id'],
         ]), $result);
     }
 

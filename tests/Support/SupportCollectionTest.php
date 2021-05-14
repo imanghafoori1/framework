@@ -706,7 +706,8 @@ class SupportCollectionTest extends TestCase
     public function testHigherOrderFilter($collection)
     {
         $c = new $collection([
-            new class {
+            new class
+            {
                 public $name = 'Alex';
 
                 public function active()
@@ -714,7 +715,8 @@ class SupportCollectionTest extends TestCase
                     return true;
                 }
             },
-            new class {
+            new class
+            {
                 public $name = 'John';
 
                 public function active()
@@ -4240,10 +4242,13 @@ class SupportCollectionTest extends TestCase
         $data = new $collection([1, 2, 3]);
 
         $fromTap = [];
-        $data = $data->tap(function ($data) use (&$fromTap) {
+        $tappedInstance = null;
+        $data = $data->tap(function ($data) use (&$fromTap, &$tappedInstance) {
             $fromTap = $data->slice(0, 1)->toArray();
+            $tappedInstance = $data;
         });
 
+        $this->assertSame($data, $tappedInstance);
         $this->assertSame([1], $fromTap);
         $this->assertSame([1, 2, 3], $data->toArray());
     }
