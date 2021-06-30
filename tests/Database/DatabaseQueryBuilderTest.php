@@ -1190,6 +1190,40 @@ class DatabaseQueryBuilderTest extends TestCase
         $this->assertEquals([1, 1, 'news', 'opinion'], $builder->getBindings());
     }
 
+    public function testOrderBysSqlServer()
+    {
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->orderBy('email')->orderBy('age', 'desc');
+        $this->assertSame('select * from [users] order by [email] asc, [age] desc', $builder->toSql());
+
+        $builder->orders = null;
+        $this->assertSame('select * from [users]', $builder->toSql());
+
+        $builder->orders = [];
+        $this->assertSame('select * from [users]', $builder->toSql());
+
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->orderBy('email');
+        $this->assertSame('select * from [users] order by [email] asc', $builder->toSql());
+
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->orderByDesc('name');
+        $this->assertSame('select * from [users] order by [name] desc', $builder->toSql());
+
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->orderByRaw('[age] asc');
+        $this->assertSame('select * from [users] order by [age] asc', $builder->toSql());
+
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->orderBy('email')->orderByRaw('[age] ? desc', ['foo']);
+        $this->assertSame('select * from [users] order by [email] asc, [age] ? desc', $builder->toSql());
+        $this->assertEquals(['foo'], $builder->getBindings());
+
+        $builder = $this->getSqlServerBuilder();
+        $builder->select('*')->from('users')->skip(25)->take(10)->orderByRaw('[email] desc');
+        $this->assertSame('select * from (select *, row_number() over (order by [email] desc) as row_num from [users]) as temp_table where row_num between 26 and 35 order by row_num', $builder->toSql());
+    }
+
     public function testReorder()
     {
         $builder = $this->getBuilder();
@@ -3037,6 +3071,15 @@ SQL;
         $this->assertSame('select * from (select *, row_number() over (order by [email] desc) as row_num from [users]) as temp_table where row_num between 11 and 20 order by row_num', $builder->toSql());
 
         $builder = $this->getSqlServerBuilder();
+        $subQueryBuilder = $this->getSqlServerBuilder();
+        $subQuery = function ($query) {
+            return $query->select('created_at')->from('logins')->where('users.name', 'nameBinding')->whereColumn('user_id', 'users.id')->limit(1);
+        };
+        $builder->select('*')->from('users')->where('email', 'emailBinding')->orderBy($subQuery)->skip(10)->take(10);
+        $this->assertSame('select * from (select *, row_number() over (order by (select top 1 [created_at] from [logins] where [users].[name] = ? and [user_id] = [users].[id]) asc) as row_num from [users] where [email] = ?) as temp_table where row_num between 11 and 20 order by row_num', $builder->toSql());
+        $this->assertEquals(['nameBinding', 'emailBinding'], $builder->getBindings());
+
+        $builder = $this->getSqlServerBuilder();
         $builder->select('*')->from('users')->take('foo');
         $this->assertSame('select * from [users]', $builder->toSql());
 
@@ -4130,7 +4173,7 @@ SQL;
         $grammar = new SqlServerGrammar;
         $processor = m::mock(Processor::class);
 
-        return new Builder(m::mock(ConnectionInterface::class), $grammar, $processor);
+        return new Builder($this->getConnection(), $grammar, $processor);
     }
 
     protected function getMySqlBuilderWithProcessor()
